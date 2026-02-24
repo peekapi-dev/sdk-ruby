@@ -3,6 +3,7 @@
 require "minitest/autorun"
 require "tmpdir"
 require "json"
+require "securerandom"
 require "webrick"
 
 $LOAD_PATH.unshift File.expand_path("../lib", __dir__)
@@ -11,10 +12,11 @@ require "apidash"
 # Lightweight HTTP test server that records payloads.
 class IngestServer
   attr_reader :payloads, :port
+  attr_accessor :response_status
 
   def initialize(status: 200)
     @payloads = []
-    @status = status
+    @response_status = status
     @mutex = Mutex.new
     @server = nil
   end
@@ -38,7 +40,7 @@ class IngestServer
     end
 
     @thread = Thread.new { @server.start }
-    sleep 0.1 # Wait for server to bind
+    sleep 0.05 # Wait for server to bind
     self
   end
 
@@ -51,16 +53,8 @@ class IngestServer
     @mutex.synchronize { @payloads << events }
   end
 
-  def response_status
-    @status
-  end
-
-  def response_status=(status)
-    @status = status
-  end
-
   def endpoint
-    "http://localhost:#{@port}/ingest"
+    "http://127.0.0.1:#{@port}/ingest"
   end
 
   def all_events

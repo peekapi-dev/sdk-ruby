@@ -28,15 +28,18 @@ class TestClientConstructor < Minitest::Test
   end
 
   def test_valid_construction
+    storage = tmp_storage_path
     client = ApiDash::Client.new(
       api_key: "ak_test",
       endpoint: "http://localhost:3000/ingest",
-      storage_path: tmp_storage_path
+      storage_path: storage
     )
     assert_equal "ak_test", client.api_key
     assert_equal "http://localhost:3000/ingest", client.endpoint
   ensure
     client&.shutdown
+    File.delete(storage) rescue nil
+    File.delete("#{storage}.recovering") rescue nil
   end
 end
 
@@ -45,9 +48,10 @@ class TestClientBuffer < Minitest::Test
     @storage = tmp_storage_path
     @client = ApiDash::Client.new(
       api_key: "ak_test",
-      endpoint: "http://localhost:9999/ingest",  # Non-existent — we only test buffering
+      endpoint: "http://localhost:9999/ingest",
       storage_path: @storage,
-      flush_interval: 999  # Prevent auto-flush
+      flush_interval: 999,
+      debug: true
     )
   end
 
@@ -58,33 +62,33 @@ class TestClientBuffer < Minitest::Test
   end
 
   def test_track_buffers_event
-    @client.track(method: "GET", path: "/api/users", status_code: 200, response_time_ms: 42)
+    @client.track({ "method" => "GET", "path" => "/api/users", "status_code" => 200, "response_time_ms" => 42 })
     buf = @client.send(:instance_variable_get, :@buffer)
     assert_equal 1, buf.size
   end
 
   def test_method_uppercased
-    @client.track(method: "get", path: "/test", status_code: 200, response_time_ms: 10)
+    @client.track({ "method" => "get", "path" => "/test", "status_code" => 200, "response_time_ms" => 10 })
     buf = @client.send(:instance_variable_get, :@buffer)
     assert_equal "GET", buf.last["method"]
   end
 
   def test_path_truncated
     long_path = "/" + "a" * 3000
-    @client.track(method: "GET", path: long_path, status_code: 200, response_time_ms: 10)
+    @client.track({ "method" => "GET", "path" => long_path, "status_code" => 200, "response_time_ms" => 10 })
     buf = @client.send(:instance_variable_get, :@buffer)
     assert_equal 2048, buf.last["path"].length
   end
 
   def test_consumer_id_truncated
     long_id = "x" * 500
-    @client.track(method: "GET", path: "/test", status_code: 200, response_time_ms: 10, consumer_id: long_id)
+    @client.track({ "method" => "GET", "path" => "/test", "status_code" => 200, "response_time_ms" => 10, "consumer_id" => long_id })
     buf = @client.send(:instance_variable_get, :@buffer)
     assert_equal 256, buf.last["consumer_id"].length
   end
 
   def test_auto_timestamp
-    @client.track(method: "GET", path: "/test", status_code: 200, response_time_ms: 10)
+    @client.track({ "method" => "GET", "path" => "/test", "status_code" => 200, "response_time_ms" => 10 })
     buf = @client.send(:instance_variable_get, :@buffer)
     assert buf.last.key?("timestamp")
     refute_nil buf.last["timestamp"]
@@ -92,9 +96,16 @@ class TestClientBuffer < Minitest::Test
 
   def test_preserves_existing_timestamp
     ts = "2025-01-01T00:00:00.000Z"
-    @client.track(method: "GET", path: "/test", status_code: 200, response_time_ms: 10, timestamp: ts)
+    @client.track({ "method" => "GET", "path" => "/test", "status_code" => 200, "response_time_ms" => 10, "timestamp" => ts })
     buf = @client.send(:instance_variable_get, :@buffer)
     assert_equal ts, buf.last["timestamp"]
+  end
+
+  def test_symbol_keys_work
+    @client.track(method: "POST", path: "/api/orders", status_code: 201, response_time_ms: 55)
+    buf = @client.send(:instance_variable_get, :@buffer)
+    assert_equal 1, buf.size
+    assert_equal "POST", buf.last["method"]
   end
 
   def test_garbage_input_does_not_raise
@@ -104,7 +115,7 @@ class TestClientBuffer < Minitest::Test
 
   def test_track_after_shutdown_is_noop
     @client.shutdown
-    @client.track(method: "GET", path: "/test", status_code: 200, response_time_ms: 10)
+    @client.track({ "method" => "GET", "path" => "/test", "status_code" => 200, "response_time_ms" => 10 })
     buf = @client.send(:instance_variable_get, :@buffer)
     assert_equal 0, buf.size
   end
@@ -130,7 +141,7 @@ class TestClientFlush < Minitest::Test
   end
 
   def test_flush_sends_events
-    @client.track(method: "GET", path: "/api/users", status_code: 200, response_time_ms: 42)
+    @client.track({ "method" => "GET", "path" => "/api/users", "status_code" => 200, "response_time_ms" => 42 })
     @client.flush
 
     events = @server.all_events
@@ -140,7 +151,7 @@ class TestClientFlush < Minitest::Test
   end
 
   def test_flush_clears_buffer
-    @client.track(method: "GET", path: "/test", status_code: 200, response_time_ms: 10)
+    @client.track({ "method" => "GET", "path" => "/test", "status_code" => 200, "response_time_ms" => 10 })
     @client.flush
 
     buf = @client.send(:instance_variable_get, :@buffer)
@@ -153,27 +164,29 @@ class TestClientFlush < Minitest::Test
   end
 
   def test_flush_includes_sdk_header
-    @client.track(method: "GET", path: "/test", status_code: 200, response_time_ms: 10)
+    @client.track({ "method" => "GET", "path" => "/test", "status_code" => 200, "response_time_ms" => 10 })
     @client.flush
-    # If we got here without error, the server accepted the request
     assert_equal 1, @server.payloads.size
   end
 
   def test_flush_respects_batch_size
+    storage = tmp_storage_path
     client = ApiDash::Client.new(
       api_key: "ak_test",
       endpoint: @server.endpoint,
-      storage_path: tmp_storage_path,
+      storage_path: storage,
       flush_interval: 999,
       batch_size: 2
     )
-    5.times { |i| client.track(method: "GET", path: "/test/#{i}", status_code: 200, response_time_ms: 10) }
+    5.times { |i| client.track({ "method" => "GET", "path" => "/test/#{i}", "status_code" => 200, "response_time_ms" => 10 }) }
     client.flush  # Should send only 2
 
     events = @server.all_events
     assert_equal 2, events.size
   ensure
     client&.shutdown
+    File.delete(storage) rescue nil
+    File.delete("#{storage}.recovering") rescue nil
   end
 end
 
@@ -186,7 +199,7 @@ class TestClientDiskPersistence < Minitest::Test
       storage_path: storage,
       flush_interval: 999
     )
-    client1.track(method: "GET", path: "/persisted", status_code: 200, response_time_ms: 42)
+    client1.track({ "method" => "GET", "path" => "/persisted", "status_code" => 200, "response_time_ms" => 42 })
     client1.shutdown
 
     # New client should recover persisted events
@@ -252,7 +265,7 @@ class TestClientRetry < Minitest::Test
       flush_interval: 999
     )
 
-    client.track(method: "GET", path: "/retry", status_code: 200, response_time_ms: 10)
+    client.track({ "method" => "GET", "path" => "/retry", "status_code" => 200, "response_time_ms" => 10 })
     client.flush
 
     # Events should be reinserted into buffer after retryable failure
@@ -276,7 +289,7 @@ class TestClientRetry < Minitest::Test
       flush_interval: 999
     )
 
-    client.track(method: "GET", path: "/bad", status_code: 200, response_time_ms: 10)
+    client.track({ "method" => "GET", "path" => "/bad", "status_code" => 200, "response_time_ms" => 10 })
     client.flush
 
     # Non-retryable should persist to disk
@@ -300,7 +313,7 @@ class TestClientRetry < Minitest::Test
       on_error: ->(e) { errors << e }
     )
 
-    client.track(method: "GET", path: "/err", status_code: 200, response_time_ms: 10)
+    client.track({ "method" => "GET", "path" => "/err", "status_code" => 200, "response_time_ms" => 10 })
     client.flush
 
     assert errors.size >= 1, "Expected on_error to be called"
