@@ -2,6 +2,7 @@
 
 [![Gem](https://img.shields.io/gem/v/peekapi)](https://rubygems.org/gems/peekapi)
 [![license](https://img.shields.io/gem/l/peekapi)](./LICENSE)
+[![CI](https://github.com/peekapi-dev/sdk-ruby/actions/workflows/ci.yml/badge.svg)](https://github.com/peekapi-dev/sdk-ruby/actions/workflows/ci.yml)
 
 Zero-dependency Ruby SDK for [PeekAPI](https://peekapi.dev). Rack middleware that works with Rails, Sinatra, Hanami, and any Rack-compatible framework. Rails auto-integrates via Railtie.
 
@@ -138,6 +139,13 @@ The callback receives a `Hash` of lowercase header names and should return a con
 ## Requirements
 
 - Ruby >= 3.1
+
+## Contributing
+
+1. Fork & clone the repo
+2. Install dependencies — `bundle install`
+3. Run tests — `bundle exec rake test`
+4. Submit a PR
 
 ## License
 

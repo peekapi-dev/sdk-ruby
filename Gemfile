@@ -7,5 +7,6 @@ gemspec
 group :development, :test do
   gem "minitest", "~> 5.0"
   gem "rake", "~> 13.0"
+  gem "rubocop", "~> 1.0", require: false
   gem "webrick", "~> 1.8"
 end

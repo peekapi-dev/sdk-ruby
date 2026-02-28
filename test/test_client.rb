@@ -9,7 +9,7 @@ class TestClientConstructor < Minitest::Test
 
   def test_missing_endpoint_uses_default
     client = PeekApi::Client.new(api_key: "ak_test")
-    assert_includes client.endpoint, "supabase.co"
+    assert_includes client.endpoint, "ingest.peekapi.dev"
     client.shutdown
   end
 
@@ -237,7 +237,6 @@ class TestClientDiskPersistence < Minitest::Test
     File.delete(storage) rescue nil
     File.delete("#{storage}.recovering") rescue nil
   end
-end
 
   def test_runtime_disk_recovery
     storage = tmp_storage_path
