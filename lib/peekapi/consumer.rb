@@ -2,7 +2,7 @@
 
 require "digest/sha2"
 
-module ApiDash
+module PeekApi
   module Consumer
     module_function
 

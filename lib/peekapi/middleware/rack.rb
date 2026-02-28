@@ -1,17 +1,17 @@
 # frozen_string_literal: true
 
-module ApiDash
+module PeekApi
   module Middleware
     # Rack middleware that tracks HTTP request analytics.
     #
     # Usage (Sinatra):
     #
-    #   client = ApiDash::Client.new(api_key: "...", endpoint: "...")
-    #   use ApiDash::Middleware::Rack, client: client
+    #   client = PeekApi::Client.new(api_key: "...", endpoint: "...")
+    #   use PeekApi::Middleware::Rack, client: client
     #
     # Usage (Rails):
     #
-    #   config.middleware.use ApiDash::Middleware::Rack, client: client
+    #   config.middleware.use PeekApi::Middleware::Rack, client: client
     #
     class Rack
       def initialize(app, client: nil)
@@ -37,10 +37,18 @@ module ApiDash
           end
 
           consumer_id = identify_consumer(env)
+          path = env["PATH_INFO"] || "/"
+          if @client.collect_query_string
+            qs = env["QUERY_STRING"].to_s
+            unless qs.empty?
+              sorted = qs.split("&").sort.join("&")
+              path = "#{path}?#{sorted}"
+            end
+          end
 
           @client.track(
             "method" => env["REQUEST_METHOD"] || "GET",
-            "path" => env["PATH_INFO"] || "/",
+            "path" => path,
             "status_code" => status.to_i,
             "response_time_ms" => elapsed_ms.round(2),
             "request_size" => request_size(env),
@@ -57,10 +65,18 @@ module ApiDash
         begin
           elapsed_ms = (Process.clock_gettime(Process::CLOCK_MONOTONIC) - start) * 1000
           consumer_id = identify_consumer(env)
+          path = env["PATH_INFO"] || "/"
+          if @client.collect_query_string
+            qs = env["QUERY_STRING"].to_s
+            unless qs.empty?
+              sorted = qs.split("&").sort.join("&")
+              path = "#{path}?#{sorted}"
+            end
+          end
 
           @client.track(
             "method" => env["REQUEST_METHOD"] || "GET",
-            "path" => env["PATH_INFO"] || "/",
+            "path" => path,
             "status_code" => 500,
             "response_time_ms" => elapsed_ms.round(2),
             "request_size" => request_size(env),
@@ -78,7 +94,11 @@ module ApiDash
 
       def identify_consumer(env)
         headers = extract_headers(env)
-        ApiDash::Consumer.default_identify_consumer(headers)
+        if @client.identify_consumer
+          @client.identify_consumer.call(headers)
+        else
+          PeekApi::Consumer.default_identify_consumer(headers)
+        end
       end
 
       def extract_headers(env)

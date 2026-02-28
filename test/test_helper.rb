@@ -7,7 +7,7 @@ require "securerandom"
 require "webrick"
 
 $LOAD_PATH.unshift File.expand_path("../lib", __dir__)
-require "apidash"
+require "peekapi"
 
 # Lightweight HTTP test server that records payloads.
 class IngestServer
@@ -63,5 +63,5 @@ class IngestServer
 end
 
 def tmp_storage_path
-  File.join(Dir.tmpdir, "apidash-test-#{SecureRandom.hex(8)}.jsonl")
+  File.join(Dir.tmpdir, "peekapi-test-#{SecureRandom.hex(8)}.jsonl")
 end

@@ -4,32 +4,34 @@ require_relative "test_helper"
 
 class TestClientConstructor < Minitest::Test
   def test_missing_api_key_raises
-    assert_raises(ArgumentError) { ApiDash::Client.new(endpoint: "http://localhost:3000/ingest") }
+    assert_raises(ArgumentError) { PeekApi::Client.new(endpoint: "http://localhost:3000/ingest") }
   end
 
-  def test_missing_endpoint_raises
-    assert_raises(ArgumentError) { ApiDash::Client.new(api_key: "ak_test") }
+  def test_missing_endpoint_uses_default
+    client = PeekApi::Client.new(api_key: "ak_test")
+    assert_includes client.endpoint, "supabase.co"
+    client.shutdown
   end
 
   def test_empty_api_key_raises
-    assert_raises(ArgumentError) { ApiDash::Client.new(api_key: "", endpoint: "http://localhost:3000/ingest") }
+    assert_raises(ArgumentError) { PeekApi::Client.new(api_key: "", endpoint: "http://localhost:3000/ingest") }
   end
 
   def test_control_chars_in_api_key_raises
-    assert_raises(ArgumentError) { ApiDash::Client.new(api_key: "ak\x00test", endpoint: "http://localhost:3000/ingest") }
+    assert_raises(ArgumentError) { PeekApi::Client.new(api_key: "ak\x00test", endpoint: "http://localhost:3000/ingest") }
   end
 
   def test_https_enforced_for_non_localhost
-    assert_raises(ArgumentError) { ApiDash::Client.new(api_key: "ak_test", endpoint: "http://example.com/ingest") }
+    assert_raises(ArgumentError) { PeekApi::Client.new(api_key: "ak_test", endpoint: "http://example.com/ingest") }
   end
 
   def test_private_ip_rejected
-    assert_raises(ArgumentError) { ApiDash::Client.new(api_key: "ak_test", endpoint: "https://10.0.0.1/ingest") }
+    assert_raises(ArgumentError) { PeekApi::Client.new(api_key: "ak_test", endpoint: "https://10.0.0.1/ingest") }
   end
 
   def test_valid_construction
     storage = tmp_storage_path
-    client = ApiDash::Client.new(
+    client = PeekApi::Client.new(
       api_key: "ak_test",
       endpoint: "http://localhost:3000/ingest",
       storage_path: storage
@@ -46,7 +48,7 @@ end
 class TestClientBuffer < Minitest::Test
   def setup
     @storage = tmp_storage_path
-    @client = ApiDash::Client.new(
+    @client = PeekApi::Client.new(
       api_key: "ak_test",
       endpoint: "http://localhost:9999/ingest",
       storage_path: @storage,
@@ -125,7 +127,7 @@ class TestClientFlush < Minitest::Test
   def setup
     @server = IngestServer.new.start
     @storage = tmp_storage_path
-    @client = ApiDash::Client.new(
+    @client = PeekApi::Client.new(
       api_key: "ak_test",
       endpoint: @server.endpoint,
       storage_path: @storage,
@@ -171,7 +173,7 @@ class TestClientFlush < Minitest::Test
 
   def test_flush_respects_batch_size
     storage = tmp_storage_path
-    client = ApiDash::Client.new(
+    client = PeekApi::Client.new(
       api_key: "ak_test",
       endpoint: @server.endpoint,
       storage_path: storage,
@@ -193,7 +195,7 @@ end
 class TestClientDiskPersistence < Minitest::Test
   def test_write_and_read_round_trip
     storage = tmp_storage_path
-    client1 = ApiDash::Client.new(
+    client1 = PeekApi::Client.new(
       api_key: "ak_test",
       endpoint: "http://localhost:9999/ingest",
       storage_path: storage,
@@ -203,7 +205,7 @@ class TestClientDiskPersistence < Minitest::Test
     client1.shutdown
 
     # New client should recover persisted events
-    client2 = ApiDash::Client.new(
+    client2 = PeekApi::Client.new(
       api_key: "ak_test",
       endpoint: "http://localhost:9999/ingest",
       storage_path: storage,
@@ -221,7 +223,7 @@ class TestClientDiskPersistence < Minitest::Test
     storage = tmp_storage_path
     File.write(storage, "not-valid-json\n" + JSON.generate([{ "method" => "GET", "path" => "/ok" }]) + "\n")
 
-    client = ApiDash::Client.new(
+    client = PeekApi::Client.new(
       api_key: "ak_test",
       endpoint: "http://localhost:9999/ingest",
       storage_path: storage,
@@ -237,10 +239,36 @@ class TestClientDiskPersistence < Minitest::Test
   end
 end
 
+  def test_runtime_disk_recovery
+    storage = tmp_storage_path
+    client = PeekApi::Client.new(
+      api_key: "ak_test",
+      endpoint: "http://localhost:9999/ingest",
+      storage_path: storage,
+      flush_interval: 999
+    )
+
+    # Simulate events persisted to disk mid-process
+    events = [{ "method" => "GET", "path" => "/runtime-recover", "status_code" => 200 }]
+    File.write(storage, JSON.generate(events) + "\n")
+
+    # Trigger runtime recovery on the same client
+    client.send(:load_from_disk)
+
+    buf = client.send(:instance_variable_get, :@buffer)
+    paths = buf.map { |e| e["path"] }
+    assert_includes paths, "/runtime-recover"
+  ensure
+    client&.shutdown
+    File.delete(storage) rescue nil
+    File.delete("#{storage}.recovering") rescue nil
+  end
+end
+
 class TestClientShutdown < Minitest::Test
   def test_double_shutdown_safe
     storage = tmp_storage_path
-    client = ApiDash::Client.new(
+    client = PeekApi::Client.new(
       api_key: "ak_test",
       endpoint: "http://localhost:9999/ingest",
       storage_path: storage,
@@ -258,7 +286,7 @@ class TestClientRetry < Minitest::Test
   def test_retryable_error_reinserts_events
     server = IngestServer.new(status: 500).start
     storage = tmp_storage_path
-    client = ApiDash::Client.new(
+    client = PeekApi::Client.new(
       api_key: "ak_test",
       endpoint: server.endpoint,
       storage_path: storage,
@@ -282,7 +310,7 @@ class TestClientRetry < Minitest::Test
   def test_non_retryable_persists_to_disk
     server = IngestServer.new(status: 400).start
     storage = tmp_storage_path
-    client = ApiDash::Client.new(
+    client = PeekApi::Client.new(
       api_key: "ak_test",
       endpoint: server.endpoint,
       storage_path: storage,
@@ -305,7 +333,7 @@ class TestClientRetry < Minitest::Test
     server = IngestServer.new(status: 500).start
     storage = tmp_storage_path
     errors = []
-    client = ApiDash::Client.new(
+    client = PeekApi::Client.new(
       api_key: "ak_test",
       endpoint: server.endpoint,
       storage_path: storage,

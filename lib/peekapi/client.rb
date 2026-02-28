@@ -7,11 +7,12 @@ require "digest/sha2"
 require "tempfile"
 require "fileutils"
 
-module ApiDash
+module PeekApi
   class Client
     # --- Constants ---
-    DEFAULT_FLUSH_INTERVAL = 10    # seconds
-    DEFAULT_BATCH_SIZE = 100
+    DEFAULT_ENDPOINT = "https://ingest.peekapi.dev/v1/events"
+    DEFAULT_FLUSH_INTERVAL = 15    # seconds
+    DEFAULT_BATCH_SIZE = 250
     DEFAULT_MAX_BUFFER_SIZE = 10_000
     DEFAULT_MAX_STORAGE_BYTES = 5_242_880  # 5 MB
     DEFAULT_MAX_EVENT_BYTES = 65_536       # 64 KB
@@ -21,15 +22,16 @@ module ApiDash
     MAX_CONSECUTIVE_FAILURES = 5
     BASE_BACKOFF_S = 1.0
     SEND_TIMEOUT_S = 5
+    DISK_RECOVERY_INTERVAL_S = 60
     RETRYABLE_STATUS_CODES = [429, 500, 502, 503, 504].freeze
 
-    attr_reader :api_key, :endpoint
+    attr_reader :api_key, :endpoint, :identify_consumer, :collect_query_string
 
     # @param options [Hash]
     # @option options [String] :api_key  Required. Your API key.
-    # @option options [String] :endpoint Required. Ingestion endpoint URL.
-    # @option options [Numeric] :flush_interval  Seconds between background flushes (default 10).
-    # @option options [Integer] :batch_size       Max events per HTTP POST (default 100).
+    # @option options [String] :endpoint Ingestion endpoint URL (default: PeekAPI cloud).
+    # @option options [Numeric] :flush_interval  Seconds between background flushes (default 15).
+    # @option options [Integer] :batch_size       Max events per HTTP POST (default 250).
     # @option options [Integer] :max_buffer_size  Max buffered events (default 10_000).
     # @option options [Integer] :max_storage_bytes Max bytes for disk persistence (default 5 MB).
     # @option options [Integer] :max_event_bytes  Max bytes per single event (default 64 KB).
@@ -43,8 +45,7 @@ module ApiDash
         raise ArgumentError, "api_key contains invalid control characters"
       end
 
-      raw_endpoint = options[:endpoint] || options["endpoint"]
-      raise ArgumentError, "endpoint is required" if raw_endpoint.nil? || raw_endpoint.empty?
+      raw_endpoint = options[:endpoint] || options["endpoint"] || DEFAULT_ENDPOINT
       @endpoint = SSRF.validate_endpoint!(raw_endpoint)
 
       @flush_interval = (options[:flush_interval] || options["flush_interval"] || DEFAULT_FLUSH_INTERVAL).to_f
@@ -53,7 +54,10 @@ module ApiDash
       @max_storage_bytes = (options[:max_storage_bytes] || options["max_storage_bytes"] || DEFAULT_MAX_STORAGE_BYTES).to_i
       @max_event_bytes = (options[:max_event_bytes] || options["max_event_bytes"] || DEFAULT_MAX_EVENT_BYTES).to_i
       @debug = options[:debug] || options["debug"] || false
+      @identify_consumer = options[:identify_consumer] || options["identify_consumer"]
       @on_error = options[:on_error] || options["on_error"]
+      # NOTE: increases DB usage — each unique path+query creates a separate endpoint row.
+      @collect_query_string = options[:collect_query_string] || options["collect_query_string"] || false
 
       # Storage path
       storage = options[:storage_path] || options["storage_path"]
@@ -61,7 +65,7 @@ module ApiDash
         @storage_path = storage
       else
         h = Digest::SHA256.hexdigest(@endpoint)[0, 12]
-        @storage_path = File.join(Dir.tmpdir, "apidash-events-#{h}.jsonl")
+        @storage_path = File.join(Dir.tmpdir, "peekapi-events-#{h}.jsonl")
       end
 
       @recovery_path = nil
@@ -73,6 +77,7 @@ module ApiDash
       @consecutive_failures = 0
       @backoff_until = 0.0
       @shutdown = false
+      @last_disk_recovery = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
       # Load persisted events from disk
       load_from_disk
@@ -101,7 +106,7 @@ module ApiDash
     def track(event)
       track_inner(event)
     rescue StandardError => e
-      $stderr.puts "apidash: track() error: #{e.message}" if @debug
+      $stderr.puts "peekapi: track() error: #{e.message}" if @debug
     end
 
     # Flush buffered events synchronously (blocks until complete).
@@ -170,7 +175,7 @@ module ApiDash
         d.delete("metadata")
         raw = JSON.generate(d)
         if raw.bytesize > @max_event_bytes
-          $stderr.puts "apidash: event too large, dropping (#{raw.bytesize} bytes)" if @debug
+          $stderr.puts "peekapi: event too large, dropping (#{raw.bytesize} bytes)" if @debug
           return
         end
       end
@@ -214,12 +219,12 @@ module ApiDash
         @in_flight = false
       end
       cleanup_recovery_file
-      $stderr.puts "apidash: flushed #{batch.size} events" if @debug
+      $stderr.puts "peekapi: flushed #{batch.size} events" if @debug
     rescue NonRetryableError => e
       @mutex.synchronize { @in_flight = false }
       persist_to_disk(batch)
       call_on_error(e)
-      $stderr.puts "apidash: non-retryable error, persisted to disk: #{e.message}" if @debug
+      $stderr.puts "peekapi: non-retryable error, persisted to disk: #{e.message}" if @debug
     rescue StandardError => e
       failures = @mutex.synchronize do
         @consecutive_failures += 1
@@ -244,7 +249,7 @@ module ApiDash
       end
 
       call_on_error(e)
-      $stderr.puts "apidash: flush failed (attempt #{failures}): #{e.message}" if @debug
+      $stderr.puts "peekapi: flush failed (attempt #{failures}): #{e.message}" if @debug
     end
 
     def send_events(events)
@@ -259,7 +264,7 @@ module ApiDash
       request = Net::HTTP::Post.new(uri.request_uri)
       request["Content-Type"] = "application/json"
       request["x-api-key"] = @api_key
-      request["x-apidash-sdk"] = "ruby/#{VERSION}"
+      request["x-peekapi-sdk"] = "ruby/#{VERSION}"
       request.body = body
 
       response = http.request(request)
@@ -293,6 +298,13 @@ module ApiDash
 
         batch = drain_batch
         do_flush(batch) unless batch.empty?
+
+        # Periodically recover persisted events from disk
+        now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        if now - @last_disk_recovery >= DISK_RECOVERY_INTERVAL_S
+          @last_disk_recovery = now
+          load_from_disk
+        end
       end
     end
 
@@ -307,14 +319,14 @@ module ApiDash
       size = File.size(path) rescue 0
 
       if size >= @max_storage_bytes
-        $stderr.puts "apidash: storage file full, dropping #{events.size} events" if @debug
+        $stderr.puts "peekapi: storage file full, dropping #{events.size} events" if @debug
         return
       end
 
       line = JSON.generate(events) + "\n"
       File.open(path, "a", 0o600) { |f| f.write(line) }
     rescue StandardError => e
-      $stderr.puts "apidash: disk persist failed: #{e.message}" if @debug
+      $stderr.puts "peekapi: disk persist failed: #{e.message}" if @debug
     end
 
     def load_from_disk
@@ -344,8 +356,11 @@ module ApiDash
           end
 
           unless events.empty?
-            @buffer.concat(events[0, @max_buffer_size])
-            $stderr.puts "apidash: loaded #{events.size} events from disk" if @debug
+            @mutex.synchronize do
+              space = @max_buffer_size - @buffer.size
+              @buffer.concat(events[0, space]) if space > 0
+            end
+            $stderr.puts "peekapi: loaded #{events.size} events from disk" if @debug
           end
 
           # Rename to .recovering so we don't double-load
@@ -363,7 +378,7 @@ module ApiDash
 
           break # loaded from one file, done
         rescue StandardError => e
-          $stderr.puts "apidash: disk load failed from #{path}: #{e.message}" if @debug
+          $stderr.puts "peekapi: disk load failed from #{path}: #{e.message}" if @debug
         end
       end
     end

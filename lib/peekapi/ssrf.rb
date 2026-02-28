@@ -3,7 +3,7 @@
 require "ipaddr"
 require "uri"
 
-module ApiDash
+module PeekApi
   module SSRF
     # Private/reserved IPv4 networks
     PRIVATE_NETWORKS = [

@@ -24,9 +24,12 @@ end
 # Stub client that records tracked events
 class StubClient
   attr_reader :events
+  attr_accessor :identify_consumer, :collect_query_string
 
   def initialize
     @events = []
+    @identify_consumer = nil
+    @collect_query_string = false
   end
 
   def track(event)
@@ -40,7 +43,7 @@ class TestRackMiddleware < Minitest::Test
   def test_200_response_tracked
     stub_client = StubClient.new
     app = TestApp.new(status: 200, body: "Hello")
-    middleware = ApiDash::Middleware::Rack.new(app, client: stub_client)
+    middleware = PeekApi::Middleware::Rack.new(app, client: stub_client)
 
     env = rack_env("GET", "/api/users")
     status, _headers, body = middleware.call(env)
@@ -60,7 +63,7 @@ class TestRackMiddleware < Minitest::Test
   def test_500_response_tracked
     stub_client = StubClient.new
     app = TestApp.new(status: 500, body: "Error")
-    middleware = ApiDash::Middleware::Rack.new(app, client: stub_client)
+    middleware = PeekApi::Middleware::Rack.new(app, client: stub_client)
 
     env = rack_env("POST", "/api/orders")
     status, _headers, _body = middleware.call(env)
@@ -73,7 +76,7 @@ class TestRackMiddleware < Minitest::Test
   def test_consumer_id_from_api_key
     stub_client = StubClient.new
     app = TestApp.new
-    middleware = ApiDash::Middleware::Rack.new(app, client: stub_client)
+    middleware = PeekApi::Middleware::Rack.new(app, client: stub_client)
 
     env = rack_env("GET", "/api/users", "HTTP_X_API_KEY" => "ak_live_abc")
     middleware.call(env)
@@ -84,7 +87,7 @@ class TestRackMiddleware < Minitest::Test
   def test_consumer_id_from_authorization
     stub_client = StubClient.new
     app = TestApp.new
-    middleware = ApiDash::Middleware::Rack.new(app, client: stub_client)
+    middleware = PeekApi::Middleware::Rack.new(app, client: stub_client)
 
     env = rack_env("GET", "/api/users", "HTTP_AUTHORIZATION" => "Bearer token123")
     middleware.call(env)
@@ -94,9 +97,22 @@ class TestRackMiddleware < Minitest::Test
     assert_equal 17, consumer.length
   end
 
+  def test_custom_identify_consumer
+    stub_client = StubClient.new
+    stub_client.identify_consumer = ->(headers) { headers["x-tenant-id"] }
+
+    app = TestApp.new
+    middleware = PeekApi::Middleware::Rack.new(app, client: stub_client)
+
+    env = rack_env("GET", "/api/users", "HTTP_X_TENANT_ID" => "tenant-42", "HTTP_X_API_KEY" => "ignored")
+    middleware.call(env)
+
+    assert_equal "tenant-42", stub_client.events.first["consumer_id"]
+  end
+
   def test_no_client_passthrough
     app = TestApp.new(status: 200, body: "OK")
-    middleware = ApiDash::Middleware::Rack.new(app, client: nil)
+    middleware = PeekApi::Middleware::Rack.new(app, client: nil)
 
     env = rack_env("GET", "/test")
     status, _headers, body = middleware.call(env)
@@ -113,7 +129,7 @@ class TestRackMiddleware < Minitest::Test
     end
 
     app = TestApp.new
-    middleware = ApiDash::Middleware::Rack.new(app, client: bad_client)
+    middleware = PeekApi::Middleware::Rack.new(app, client: bad_client)
 
     env = rack_env("GET", "/test")
     status, _headers, body = middleware.call(env)
@@ -126,7 +142,7 @@ class TestRackMiddleware < Minitest::Test
   def test_app_exception_still_tracked
     stub_client = StubClient.new
     app = RaisingApp.new
-    middleware = ApiDash::Middleware::Rack.new(app, client: stub_client)
+    middleware = PeekApi::Middleware::Rack.new(app, client: stub_client)
 
     env = rack_env("GET", "/fail")
     assert_raises(RuntimeError) { middleware.call(env) }
@@ -139,7 +155,7 @@ class TestRackMiddleware < Minitest::Test
   def test_request_size_captured
     stub_client = StubClient.new
     app = TestApp.new
-    middleware = ApiDash::Middleware::Rack.new(app, client: stub_client)
+    middleware = PeekApi::Middleware::Rack.new(app, client: stub_client)
 
     env = rack_env("POST", "/api/data", "CONTENT_LENGTH" => "1024")
     middleware.call(env)
@@ -150,7 +166,7 @@ class TestRackMiddleware < Minitest::Test
   def test_response_size_from_content_length
     stub_client = StubClient.new
     app = TestApp.new(status: 200, body: "Hello", headers: { "content-length" => "5" })
-    middleware = ApiDash::Middleware::Rack.new(app, client: stub_client)
+    middleware = PeekApi::Middleware::Rack.new(app, client: stub_client)
 
     env = rack_env("GET", "/test")
     middleware.call(env)
@@ -161,12 +177,59 @@ class TestRackMiddleware < Minitest::Test
   def test_post_method_captured
     stub_client = StubClient.new
     app = TestApp.new
-    middleware = ApiDash::Middleware::Rack.new(app, client: stub_client)
+    middleware = PeekApi::Middleware::Rack.new(app, client: stub_client)
 
     env = rack_env("POST", "/api/create")
     middleware.call(env)
 
     assert_equal "POST", stub_client.events.first["method"]
+  end
+
+  def test_collect_query_string_disabled_by_default
+    stub_client = StubClient.new
+    app = TestApp.new
+    middleware = PeekApi::Middleware::Rack.new(app, client: stub_client)
+
+    env = rack_env("GET", "/search", "QUERY_STRING" => "z=3&a=1")
+    middleware.call(env)
+
+    assert_equal "/search", stub_client.events.first["path"]
+  end
+
+  def test_collect_query_string_enabled
+    stub_client = StubClient.new
+    stub_client.collect_query_string = true
+    app = TestApp.new
+    middleware = PeekApi::Middleware::Rack.new(app, client: stub_client)
+
+    env = rack_env("GET", "/search", "QUERY_STRING" => "z=3&a=1")
+    middleware.call(env)
+
+    assert_equal "/search?a=1&z=3", stub_client.events.first["path"]
+  end
+
+  def test_collect_query_string_sorts_params
+    stub_client = StubClient.new
+    stub_client.collect_query_string = true
+    app = TestApp.new
+    middleware = PeekApi::Middleware::Rack.new(app, client: stub_client)
+
+    env = rack_env("GET", "/users", "QUERY_STRING" => "role=admin&name=alice")
+    middleware.call(env)
+
+    assert_equal "/users?name=alice&role=admin", stub_client.events.first["path"]
+  end
+
+  def test_collect_query_string_no_qs
+    stub_client = StubClient.new
+    stub_client.collect_query_string = true
+    app = TestApp.new
+    middleware = PeekApi::Middleware::Rack.new(app, client: stub_client)
+
+    env = rack_env("GET", "/users")
+    middleware.call(env)
+
+    assert_equal "/users", stub_client.events.first["path"]
   end
 
   private
