@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require "digest/sha2"
+require 'digest/sha2'
 
 module PeekApi
   module Consumer
@@ -20,10 +20,10 @@ module PeekApi
     #
     # Headers keys are expected to be lowercase (Rack convention).
     def default_identify_consumer(headers)
-      api_key = headers["x-api-key"]
+      api_key = headers['x-api-key']
       return api_key if api_key && !api_key.empty?
 
-      auth = headers["authorization"]
+      auth = headers['authorization']
       return hash_consumer_id(auth) if auth && !auth.empty?
 
       nil

@@ -1,52 +1,52 @@
 # frozen_string_literal: true
 
-require_relative "test_helper"
+require_relative 'test_helper'
 
 class TestHashConsumerId < Minitest::Test
   def test_format_prefix_and_length
-    result = PeekApi::Consumer.hash_consumer_id("Bearer token123")
-    assert result.start_with?("hash_"), "Expected hash_ prefix, got: #{result}"
+    result = PeekApi::Consumer.hash_consumer_id('Bearer token123')
+    assert result.start_with?('hash_'), "Expected hash_ prefix, got: #{result}"
     # hash_ (5 chars) + 12 hex chars = 17
     assert_equal 17, result.length
   end
 
   def test_deterministic
-    a = PeekApi::Consumer.hash_consumer_id("same-value")
-    b = PeekApi::Consumer.hash_consumer_id("same-value")
+    a = PeekApi::Consumer.hash_consumer_id('same-value')
+    b = PeekApi::Consumer.hash_consumer_id('same-value')
     assert_equal a, b
   end
 
   def test_different_inputs_produce_different_hashes
-    a = PeekApi::Consumer.hash_consumer_id("value-a")
-    b = PeekApi::Consumer.hash_consumer_id("value-b")
+    a = PeekApi::Consumer.hash_consumer_id('value-a')
+    b = PeekApi::Consumer.hash_consumer_id('value-b')
     refute_equal a, b
   end
 
   def test_hex_output
-    result = PeekApi::Consumer.hash_consumer_id("test")
-    hex_part = result.sub("hash_", "")
+    result = PeekApi::Consumer.hash_consumer_id('test')
+    hex_part = result.sub('hash_', '')
     assert_match(/\A[0-9a-f]{12}\z/, hex_part)
   end
 end
 
 class TestDefaultIdentifyConsumer < Minitest::Test
   def test_api_key_returned_as_is
-    headers = { "x-api-key" => "ak_live_abc123" }
-    assert_equal "ak_live_abc123", PeekApi::Consumer.default_identify_consumer(headers)
+    headers = { 'x-api-key' => 'ak_live_abc123' }
+    assert_equal 'ak_live_abc123', PeekApi::Consumer.default_identify_consumer(headers)
   end
 
   def test_api_key_priority_over_authorization
     headers = {
-      "x-api-key" => "ak_live_abc123",
-      "authorization" => "Bearer token",
+      'x-api-key' => 'ak_live_abc123',
+      'authorization' => 'Bearer token'
     }
-    assert_equal "ak_live_abc123", PeekApi::Consumer.default_identify_consumer(headers)
+    assert_equal 'ak_live_abc123', PeekApi::Consumer.default_identify_consumer(headers)
   end
 
   def test_authorization_hashed
-    headers = { "authorization" => "Bearer secret-token" }
+    headers = { 'authorization' => 'Bearer secret-token' }
     result = PeekApi::Consumer.default_identify_consumer(headers)
-    assert result.start_with?("hash_")
+    assert result.start_with?('hash_')
     assert_equal 17, result.length
   end
 
@@ -55,8 +55,8 @@ class TestDefaultIdentifyConsumer < Minitest::Test
   end
 
   def test_empty_api_key_falls_through
-    headers = { "x-api-key" => "", "authorization" => "Bearer x" }
+    headers = { 'x-api-key' => '', 'authorization' => 'Bearer x' }
     result = PeekApi::Consumer.default_identify_consumer(headers)
-    assert result.start_with?("hash_")
+    assert result.start_with?('hash_')
   end
 end

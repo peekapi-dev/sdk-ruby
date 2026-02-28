@@ -2,9 +2,9 @@
 
 module PeekApi
   class Railtie < Rails::Railtie
-    initializer "peekapi.configure_middleware" do |app|
-      api_key = ENV["PEEKAPI_API_KEY"]
-      endpoint = ENV["PEEKAPI_ENDPOINT"]
+    initializer 'peekapi.configure_middleware' do |app|
+      api_key = ENV.fetch('PEEKAPI_API_KEY', nil)
+      endpoint = ENV.fetch('PEEKAPI_ENDPOINT', nil)
 
       if api_key && !api_key.empty? && endpoint && !endpoint.empty?
         client = PeekApi::Client.new(api_key: api_key, endpoint: endpoint)

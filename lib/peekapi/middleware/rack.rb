@@ -30,30 +30,34 @@ module PeekApi
 
           # Measure response size
           response_size = 0
-          if headers["content-length"]
-            response_size = headers["content-length"].to_i
+          if headers['content-length']
+            response_size = headers['content-length'].to_i
           else
-            body.each { |chunk| response_size += chunk.bytesize } rescue nil
+            begin
+              body.each { |chunk| response_size += chunk.bytesize }
+            rescue StandardError
+              nil
+            end
           end
 
           consumer_id = identify_consumer(env)
-          path = env["PATH_INFO"] || "/"
+          path = env['PATH_INFO'] || '/'
           if @client.collect_query_string
-            qs = env["QUERY_STRING"].to_s
+            qs = env['QUERY_STRING'].to_s
             unless qs.empty?
-              sorted = qs.split("&").sort.join("&")
+              sorted = qs.split('&').sort.join('&')
               path = "#{path}?#{sorted}"
             end
           end
 
           @client.track(
-            "method" => env["REQUEST_METHOD"] || "GET",
-            "path" => path,
-            "status_code" => status.to_i,
-            "response_time_ms" => elapsed_ms.round(2),
-            "request_size" => request_size(env),
-            "response_size" => response_size,
-            "consumer_id" => consumer_id
+            'method' => env['REQUEST_METHOD'] || 'GET',
+            'path' => path,
+            'status_code' => status.to_i,
+            'response_time_ms' => elapsed_ms.round(2),
+            'request_size' => request_size(env),
+            'response_size' => response_size,
+            'consumer_id' => consumer_id
           )
         rescue StandardError
           # Never crash the app
@@ -65,23 +69,23 @@ module PeekApi
         begin
           elapsed_ms = (Process.clock_gettime(Process::CLOCK_MONOTONIC) - start) * 1000
           consumer_id = identify_consumer(env)
-          path = env["PATH_INFO"] || "/"
+          path = env['PATH_INFO'] || '/'
           if @client.collect_query_string
-            qs = env["QUERY_STRING"].to_s
+            qs = env['QUERY_STRING'].to_s
             unless qs.empty?
-              sorted = qs.split("&").sort.join("&")
+              sorted = qs.split('&').sort.join('&')
               path = "#{path}?#{sorted}"
             end
           end
 
           @client.track(
-            "method" => env["REQUEST_METHOD"] || "GET",
-            "path" => path,
-            "status_code" => 500,
-            "response_time_ms" => elapsed_ms.round(2),
-            "request_size" => request_size(env),
-            "response_size" => 0,
-            "consumer_id" => consumer_id
+            'method' => env['REQUEST_METHOD'] || 'GET',
+            'path' => path,
+            'status_code' => 500,
+            'response_time_ms' => elapsed_ms.round(2),
+            'request_size' => request_size(env),
+            'response_size' => 0,
+            'consumer_id' => consumer_id
           )
         rescue StandardError
           # Never crash
@@ -104,16 +108,16 @@ module PeekApi
       def extract_headers(env)
         headers = {}
         env.each do |key, value|
-          next unless key.start_with?("HTTP_")
+          next unless key.start_with?('HTTP_')
 
-          header_name = key[5..].downcase.tr("_", "-")
+          header_name = key[5..].downcase.tr('_', '-')
           headers[header_name] = value
         end
         headers
       end
 
       def request_size(env)
-        env["CONTENT_LENGTH"].to_i
+        env['CONTENT_LENGTH'].to_i
       rescue StandardError
         0
       end

@@ -21,5 +21,18 @@ Metrics/PerceivedComplexity:
   Enabled: false
 
 Metrics/BlockLength:
+  Enabled: false
+
+Style/OneClassPerFile:
   Exclude:
     - test/**/*
+
+Naming/VariableNumber:
+  Exclude:
+    - test/**/*
+
+Style/Documentation:
+  Enabled: false
+
+Gemspec/DevelopmentDependencies:
+  Enabled: false

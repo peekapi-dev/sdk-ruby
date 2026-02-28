@@ -1,13 +1,13 @@
 # frozen_string_literal: true
 
-require "minitest/autorun"
-require "tmpdir"
-require "json"
-require "securerandom"
-require "webrick"
+require 'minitest/autorun'
+require 'tmpdir'
+require 'json'
+require 'securerandom'
+require 'webrick'
 
-$LOAD_PATH.unshift File.expand_path("../lib", __dir__)
-require "peekapi"
+$LOAD_PATH.unshift File.expand_path('../lib', __dir__)
+require 'peekapi'
 
 # Lightweight HTTP test server that records payloads.
 class IngestServer
@@ -24,18 +24,18 @@ class IngestServer
   def start
     @server = WEBrick::HTTPServer.new(
       Port: 0,
-      Logger: WEBrick::Log.new("/dev/null"),
+      Logger: WEBrick::Log.new(File::NULL),
       AccessLog: []
     )
     @port = @server.config[:Port]
 
     handler = self
-    @server.mount_proc("/ingest") do |req, res|
+    @server.mount_proc('/ingest') do |req, res|
       body = req.body
       events = JSON.parse(body) if body && !body.empty?
       handler.record(events)
       res.status = handler.response_status
-      res["Content-Type"] = "application/json"
+      res['Content-Type'] = 'application/json'
       res.body = JSON.generate({ accepted: events&.size || 0 })
     end
 
