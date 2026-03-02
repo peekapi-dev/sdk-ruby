@@ -11,7 +11,7 @@ Gem::Specification.new do |spec|
   spec.summary = 'Zero-dependency Ruby SDK for PeekAPI'
   spec.description = 'Rack middleware and client for tracking API usage analytics. ' \
                      'Works with Rails, Sinatra, Hanami, and any Rack-compatible framework.'
-  spec.homepage = 'https://github.com/peekapi/sdk-ruby'
+  spec.homepage = 'https://github.com/peekapi-dev/sdk-ruby'
   spec.required_ruby_version = '>= 3.1'
 
   spec.metadata['homepage_uri'] = spec.homepage
