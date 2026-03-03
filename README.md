@@ -142,6 +142,8 @@ The callback receives a `Hash` of lowercase header names and should return a con
 
 ## Contributing
 
+Bug reports and feature requests: [peekapi-dev/community](https://github.com/peekapi-dev/community/issues)
+
 1. Fork & clone the repo
 2. Install dependencies — `bundle install`
 3. Run tests — `bundle exec rake test`
